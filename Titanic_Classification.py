@@ -1,60 +1,84 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
+import matplotlib
+# Force the interactive popup window backend for Arch Linux
+matplotlib.use('Qt5Agg') 
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 
-# Load publicly available dataset
-url = 'https://raw.githubusercontent.com/datasciencedojo/datasets/master/titanic.csv'
-df = pd.read_csv(url)
-
-# ==========================================
-# RUBRIC SECTION 1: Data Pre-processing (5 Marks)
-# ==========================================
-# 1. Drop columns that are mostly null or irrelevant to the model
-df = df.drop(['Cabin', 'Ticket', 'PassengerId', 'Name'], axis=1)
-
-# 2. Handle missing values
-df['Age'] = df['Age'].fillna(df['Age'].median()) # Fill missing ages with median
-df['Embarked'] = df['Embarked'].fillna(df['Embarked'].mode()[0]) # Fill missing ports with mode
-
-# 3. Encode categorical variables into numeric
-le = LabelEncoder()
-df['Sex'] = le.fit_transform(df['Sex'])
-df['Embarked'] = le.fit_transform(df['Embarked'])
+# Load the preprocessed data
+try:
+    df = pd.read_csv('clean_churn_data.csv')
+except FileNotFoundError:
+    print("CRITICAL ERROR: 'clean_churn_data.csv' not found. Run preprocessing.py first!")
+    exit()
 
 # ==========================================
-# RUBRIC SECTION 2: Feature Engineering (5 Marks)
+# RUBRIC SECTION 1: Data Exploration & Visuals
 # ==========================================
-# Create a new feature 'FamilySize' by combining SibSp (Siblings/Spouses) and Parch (Parents/Children)
-df['FamilySize'] = df['SibSp'] + df['Parch'] + 1
+print("--- Data Exploration Summary ---")
+print(df.info())
 
-# Drop the old columns to avoid multicollinearity 
-df = df.drop(['SibSp', 'Parch'], axis=1)
+# VISUALIZATION 1: Churn by Contract Type
+plt.figure(figsize=(7, 5))
+sns.countplot(data=df, x='Churn', hue='Contract', palette='Set1')
+plt.title('Customer Churn Volume by Contract Length')
+plt.show() 
 
 # ==========================================
-# RUBRIC SECTION 3 & 4: Model Selection, Training & Eval (10 Marks)
+# RUBRIC SECTION 2: Feature Selection (Correlation)
 # ==========================================
-# Define features (X) and target (y)
-X = df.drop('Survived', axis=1)
-y = df['Survived']
+# VISUALIZATION 2: Target Correlation Heatmap
+plt.figure(figsize=(4, 6))
+# Forces numeric_only to bypass string conversion crashes
+corr_matrix = df.corr(numeric_only=True)
+sns.heatmap(corr_matrix[['Churn']].sort_values(by='Churn', ascending=False).head(10), 
+            annot=True, cmap='coolwarm', fmt=".2f")
+plt.title('Top 10 Feature Correlations with Churn')
+plt.show() 
 
-# Split data into 80% training and 20% testing
+# Define features and target
+X = df.drop('Churn', axis=1)
+y = df['Churn']
+
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Model Selection Justification: 
-# We choose Random Forest because it handles non-linear data well, is robust to outliers, 
-# and provides feature importance which is useful for evaluation.
-model = RandomForestClassifier(n_estimators=100, random_state=42)
+# ==========================================
+# RUBRIC SECTION 3: Model Selection & Justification
+# ==========================================
+print("\n--- Hyperparameter Tuning (GridSearchCV) ---")
+param_grid = {
+    'n_estimators': [50, 100],
+    'max_depth': [5, 10],
+    'min_samples_split': [2, 5]
+}
 
-# Train the model
-model.fit(X_train, y_train)
+# GridSearch handles 3-fold cross validation automatically
+rf = RandomForestClassifier(random_state=42)
+grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=3, n_jobs=-1)
+grid_search.fit(X_train, y_train)
+best_model = grid_search.best_estimator_
 
-# Predictions
-y_pred = model.predict(X_test)
+print(f"Optimal Parameters Chosen: {grid_search.best_params_}")
 
-# Evaluation
+print("\n--- Feature Importances ---")
+importances = pd.Series(best_model.feature_importances_, index=X.columns).sort_values(ascending=False).head(5)
+print("Top 5 Drivers of Customer Churn:")
+print(importances)
+
+# ==========================================
+# RUBRIC SECTION 4: Training & Evaluation
+# ==========================================
+print("\n--- Final Model Evaluation ---")
+y_pred = best_model.predict(X_test)
+
 accuracy = accuracy_score(y_test, y_pred)
-print(f"Model Accuracy: {accuracy * 100:.2f}%\n")
-print("Classification Report:")
+print(f"Optimized Accuracy: {accuracy * 100:.2f}%\n")
+
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
+
+print("\nClassification Report:")
 print(classification_report(y_test, y_pred))
